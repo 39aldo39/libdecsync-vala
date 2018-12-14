@@ -294,7 +294,7 @@ public class Decsync<T> : GLib.Object {
 				}
 				var path = new Gee.ArrayList<string>();
 				path.add_all_iterator(pathEncoded.map<string>(part => { return FileUtils.urldecode(part); }));
-				if (path.any_match(part => { return part == null; })) {
+				if (path.fold<bool>((part, seed) => { return part == null || seed; }, false)) {
 					Log.w("Cannot decode path " + pathString);
 					return;
 				}
@@ -441,7 +441,7 @@ public class Decsync<T> : GLib.Object {
 					if (entryLine == null) {
 						return false;
 					}
-					return !entries.any_match(entry => { return entry.key.equal(entryLine.key); });
+					return entries.fold<bool>((entry, seed) => { return !entry.key.equal(entryLine.key) && seed; }, true);
 				});
 			}
 
