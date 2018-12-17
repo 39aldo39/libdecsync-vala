@@ -451,6 +451,21 @@ public class Decsync<T> : GLib.Object {
 				return true;
 			});
 			FileUtils.writeFile(entriesLocation.storedEntriesFile, builder.str, true);
+
+			var maxDatetime = entries.fold<string?>((entry, seed) => { if (seed == null || entry.datetime > seed) return entry.datetime; else return seed; }, null);
+			if (maxDatetime != null) {
+				var latestStoredEntryFile = File.new_for_path(dir + "/info/" + ownAppIdEncoded + "/latest-stored-entry");
+				string? latestDatetime = null;
+				try {
+					var stream = new DataInputStream(latestStoredEntryFile.read());
+					latestDatetime = stream.read_line();
+				} catch (GLib.Error e) {
+					Log.w(e.message);
+				}
+				if (latestDatetime == null || maxDatetime > latestDatetime) {
+					FileUtils.writeFile(latestStoredEntryFile, maxDatetime);
+				}
+			}
 		}
 		catch (GLib.Error e)
 		{
@@ -497,36 +512,7 @@ public class Decsync<T> : GLib.Object {
 	public void initStoredEntries()
 	{
 		// Get the most up-to-date appId
-		string? appId = null;
-		string? maxDatetime = null;
-		FileUtils.listFilesRecursiveRelative(File.new_for_path(dir + "/stored-entries"))
-			.filter(path => { return !path.is_empty; })
-			.@foreach(path => {
-				var pathString = FileUtils.pathToString(path);
-				try {
-					var file = File.new_for_path(dir + "/stored-entries/" + pathString);
-					var stream = new DataInputStream(file.read());
-					string line;
-					while ((line = stream.read_line(null)) != null) {
-						var entry = Entry.fromLine(line);
-						if (entry == null) {
-							continue;
-						}
-						if (maxDatetime == null || entry.datetime > maxDatetime ||
-								path.first() == ownAppId && entry.datetime == maxDatetime) { // Prefer own appId
-							maxDatetime = entry.datetime;
-							appId = path.first();
-						}
-					}
-				} catch (GLib.Error e) {
-					Log.w(e.message);
-				}
-				return true;
-			});
-		if (appId == null) {
-			Log.i("No appId found for initialization");
-			return;
-		}
+		var appId = latestAppId();
 
 		// Copy the stored files and update the read bytes
 		if (appId != ownAppId) {
@@ -561,6 +547,54 @@ public class Decsync<T> : GLib.Object {
 			});
 		}
     }
+
+	/**
+	 * Returns the most up-to-date appId. This is the appId which has stored the most recent entry.
+	 * In case of a tie, the appId corresponding to the current application is used, if possible.
+	 */
+	public string latestAppId()
+	{
+		string? latestAppId = null;
+		string? latestDatetime = null;
+		var infoDir = File.new_for_path(dir + "/info");
+		try {
+			var enumerator = infoDir.enumerate_children("standard::*", FileQueryInfoFlags.NONE);
+			FileInfo info;
+			while ((info = enumerator.next_file(null)) != null) {
+				if (info.get_name()[0] == '.') {
+					continue;
+				}
+
+				var appId = FileUtils.urldecode(info.get_name());
+				var file = File.new_for_path(dir + "/info/" + info.get_name() + "/latest-stored-entry");
+
+				if (appId == null ||
+					!file.query_exists() ||
+					file.query_file_type(FileQueryInfoFlags.NONE) != FileType.REGULAR)
+				{
+					continue;
+				}
+
+				string? datetime = null;
+				try {
+					var stream = new DataInputStream(file.read());
+					datetime = stream.read_line();
+				} catch (GLib.Error e) {
+					Log.w(e.message);
+				}
+				if (datetime > latestDatetime ||
+					appId == ownAppId && datetime == latestDatetime)
+				{
+					latestDatetime = datetime;
+					latestAppId = appId;
+				}
+			}
+		} catch (GLib.Error e) {
+			Log.w(e.message);
+		}
+
+		return latestAppId ?? ownAppId;
+	}
 
 	/**
 	 * Returns the value of the given [key] in the map of the given [path], and in the given
