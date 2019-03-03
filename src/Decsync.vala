@@ -208,7 +208,7 @@ public class Decsync<T> : GLib.Object {
 	 */
 	public void setEntries(Gee.Collection<EntryWithPath> entriesWithPath)
 	{
-		var multiMap = groupBy<EntryWithPath, Gee.List<string>, Entry>(
+		var multiMap = groupByPath<EntryWithPath, Entry>(
 			entriesWithPath,
 			entryWithPath => { return entryWithPath.path; },
 			entryWithPath => { return entryWithPath.entry; }
