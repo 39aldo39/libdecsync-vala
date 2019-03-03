@@ -1,5 +1,5 @@
 project('libdecsync', ['vala', 'c'],
-  version: '1.1.0',
+  version: '1.1.1',
   license: 'LGPL'
 )
 
