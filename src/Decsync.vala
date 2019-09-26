@@ -18,6 +18,11 @@
 
 public class Unit { public Unit() {} }
 
+public errordomain DecsyncError {
+	INVALID_INFO,
+	UNSUPPORTED_VERSION
+}
+
 /**
  * The `DecSync` class represents an interface to synchronized key-value mappings stored on the file
  * system.
@@ -63,6 +68,7 @@ public class Unit { public Unit() {} }
  * listener whose method [OnEntryUpdateListener.matchesPath] returns true.
  * @property syncComplete an optional function which is called when a sync is complete. For example,
  * it can be used to update the UI.
+ * @throws DecsyncException if a DecSync configuration error occurred.
  */
 public class Decsync<T> : GLib.Object {
 
@@ -77,12 +83,14 @@ public class Decsync<T> : GLib.Object {
 	 */
 	public signal void syncComplete(T extra);
 
-	public Decsync(string dir, string ownAppId, Gee.Iterable<OnEntryUpdateListener<T>> listeners)
+	public Decsync(string dir, string ownAppId, Gee.Iterable<OnEntryUpdateListener<T>> listeners) throws DecsyncError
 	{
 		this.dir = dir;
 		this.ownAppId = ownAppId;
 		this.ownAppIdEncoded = FileUtils.urlencode(ownAppId);
 		this.listeners = listeners;
+
+		checkDecsyncSubdirInfo(dir);
 	}
 
 	/**
@@ -601,10 +609,13 @@ public class Decsync<T> : GLib.Object {
 	 * [DecSync directory][decsyncDir] without specifying an appId, or `null` if there is no
 	 * such value. The use of this method is discouraged. It is recommended to use the method
 	 * [executeStoredEntries] when possible.
+	 *
+	 * @throws DecsyncException if a DecSync configuration error occurred.
 	 */
-	public static Json.Node? getStoredStaticValue(string decsyncDir, string[] pathArray, Json.Node key)
+	public static Json.Node? getStoredStaticValue(string decsyncDir, string[] pathArray, Json.Node key) throws DecsyncError
 	{
 		Log.d("Get value for key " + Json.to_string(key, false) + " for path " + string.joinv("/", pathArray) + " in " + decsyncDir);
+		checkDecsyncSubdirInfo(decsyncDir);
 		var path = toList(pathArray);
 		var pathString = FileUtils.pathToString(path);
 		Json.Node? result = null;
@@ -655,6 +666,59 @@ public class Decsync<T> : GLib.Object {
 	}
 }
 
+private void checkDecsyncSubdirInfo(string decsyncSubdir) throws DecsyncError
+{
+	var syncTypes = new Gee.ArrayList<string>.wrap({"rss", "contacts", "calendars"});
+	var file = File.new_for_path(decsyncSubdir);
+	File? decsyncDir = null;
+	if (syncTypes.contains(file.get_basename())) {
+		decsyncDir = file.get_parent();
+	} else if (syncTypes.contains(file.get_parent().get_basename())) {
+		decsyncDir = file.get_parent().get_parent();
+	}
+	if (decsyncDir != null) {
+		checkDecsyncInfo(decsyncDir.get_path());
+	}
+}
+
+/**
+ * Checks whether the .decsync-info file in [decsyncDir] is of the right format and contains a
+ * supported version. If it does not exist, a new one with version 1 is created.
+ *
+ * @throws DecsyncException if a DecSync configuration error occurred.
+ */
+public void checkDecsyncInfo(string decsyncDir) throws DecsyncError
+{
+	var infoFile = File.new_for_path(decsyncDir).get_child(".decsync-info");
+	if (infoFile.query_exists()) {
+		int64 version;
+		try {
+			var stream = new DataInputStream(infoFile.read());
+			var text = stream.read_line();
+			var obj = Json.from_string(text).get_object();
+			version = obj.get_int_member("version");
+		} catch (GLib.Error e) {
+			throw new DecsyncError.INVALID_INFO("Invalid .decsync-info.\n" + e.message);
+		}
+		if (version != 1) {
+			throw new DecsyncError.UNSUPPORTED_VERSION("Unsupported DecSync version.\n" +
+					"Required version: " + version.to_string() + ".\n" +
+					"Supported version: 1.");
+		}
+	} else {
+		var obj = new Json.Object();
+		obj.set_int_member("version", 1);
+		var json = new Json.Node(Json.NodeType.OBJECT);
+		json.set_object(obj);
+		var text = Json.to_string(json, false);
+		try {
+			FileUtils.writeFile(infoFile, text);
+		} catch (GLib.Error e) {
+			throw new DecsyncError.INVALID_INFO("Could not write .decsync-info.\n" + e.message);
+		}
+	}
+}
+
 /**
  * Returns the path to the DecSync subdirectory in a [decsyncBaseDir] for a [syncType] and
  * optionally with a [collection].
@@ -691,9 +755,11 @@ public string getDefaultDecsyncBaseDir()
  * @param syncType the type of data to sync. For example, "contacts" or "calendars".
  * @param ignoreDeleted `true` to ignore deleted collections. A collection is considered deleted if
  * the most recent value of the key "deleted" with the path ["info"] is set to `true`.
+ * @throws DecsyncException if a DecSync configuration error occurred.
  */
 public Gee.ArrayList<string> listDecsyncCollections(string? decsyncBaseDir, string syncType, bool ignoreDeleted = true) throws GLib.Error
 {
+	checkDecsyncInfo(decsyncBaseDir ?? getDefaultDecsyncBaseDir());
 	var decsyncSubdir = File.new_for_path(getDecsyncSubdir(decsyncBaseDir, syncType));
 	var enumerator = decsyncSubdir.enumerate_children("standard::*", FileQueryInfoFlags.NONE);
 	FileInfo info;
